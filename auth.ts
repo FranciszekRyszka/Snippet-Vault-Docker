@@ -8,6 +8,7 @@ import {
   verifyCredentials,
   upsertOAuthUser,
   getUserByEmail,
+  isEmailAllowedToSignIn,
 } from "@/lib/users";
 
 // This module is Node-only (it imports the SQLite-backed user store). It's used
@@ -71,6 +72,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       if (account?.provider === "google" || account?.provider === "github") {
         const email = user.email ?? (profile?.email as string | undefined);
         if (!email || typeof email !== "string") return false;
+        // Enforce the email allowlist (no-op when ALLOWED_EMAILS is unset).
+        if (!isEmailAllowedToSignIn(email)) return false;
         const dbUser = await upsertOAuthUser({
           email,
           name: user.name ?? (profile?.name as string | undefined),

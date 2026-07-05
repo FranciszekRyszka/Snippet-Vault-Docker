@@ -182,6 +182,27 @@ export function selfRegistrationEnabled(): boolean {
   return process.env.ALLOW_SELF_REGISTRATION === "true";
 }
 
+// Gate for who may sign in (checked on OAuth logins). When ALLOWED_EMAILS is
+// unset, sign-in is unrestricted. When set (comma-separated), only those
+// addresses may sign in — plus the configured ADMIN_EMAIL and anyone who
+// already has an account (e.g. created by an admin), so those are never
+// accidentally locked out.
+export function isEmailAllowedToSignIn(email: string): boolean {
+  const norm = normalizeEmail(email);
+  const raw = process.env.ALLOWED_EMAILS?.trim();
+  if (!raw) return true;
+  const allow = new Set(
+    raw
+      .split(",")
+      .map((e) => e.trim().toLowerCase())
+      .filter(Boolean)
+  );
+  if (allow.has(norm)) return true;
+  const admin = process.env.ADMIN_EMAIL?.trim().toLowerCase();
+  if (admin && admin === norm) return true;
+  return Boolean(getUserByEmail(norm));
+}
+
 // ---- Admin dashboard operations -------------------------------------------
 
 export type AdminUser = PublicUser & { snippet_count: number };

@@ -15,7 +15,9 @@ export const authConfig: NextAuthConfig = {
   // without a database round-trip.
   session: { strategy: "jwt" },
   trustHost: true,
-  pages: { signIn: "/signin" },
+  // Render auth errors (e.g. a rejected/allowlist-blocked sign-in) on our own
+  // sign-in page via ?error=<code> instead of the default NextAuth error page.
+  pages: { signIn: "/signin", error: "/signin" },
   // Providers are attached in auth.ts (they need the database). Middleware only
   // decodes the existing JWT, so it needs none.
   providers: [],

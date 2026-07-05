@@ -6,19 +6,33 @@ import { signIn } from "next-auth/react";
 import Link from "next/link";
 import { PROVIDER_LABELS } from "./auth-card";
 
+// NextAuth appends ?error=<code> when a sign-in is rejected (e.g. the signIn
+// callback returns false for a non-allowlisted OAuth account).
+function messageForError(code: string | undefined): string | null {
+  if (!code) return null;
+  if (code === "AccessDenied") {
+    return "That account isn't allowed to sign in. Ask an admin for access.";
+  }
+  return "Sign-in failed. Please try again.";
+}
+
 export function SignInForm({
   providers,
   allowRegister,
   callbackUrl,
+  initialError,
 }: {
   providers: string[];
   allowRegister: boolean;
   callbackUrl: string;
+  initialError?: string;
 }) {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(
+    messageForError(initialError)
+  );
   const [loading, setLoading] = useState(false);
 
   async function onSubmit(e: React.FormEvent) {
@@ -42,6 +56,11 @@ export function SignInForm({
 
   return (
     <div className="flex flex-col gap-4">
+      {error && (
+        <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          {error}
+        </div>
+      )}
       {providers.length > 0 && (
         <>
           <div className="flex flex-col gap-2">
@@ -96,7 +115,6 @@ export function SignInForm({
             className="rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring"
           />
         </div>
-        {error && <p className="text-sm text-destructive">{error}</p>}
         <button
           type="submit"
           disabled={loading}

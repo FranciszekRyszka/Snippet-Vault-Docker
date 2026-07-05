@@ -12,15 +12,16 @@ function safeCallback(raw: string | undefined): string {
 export default async function SignInPage({
   searchParams,
 }: {
-  searchParams: Promise<{ callbackUrl?: string }>;
+  searchParams: Promise<{ callbackUrl?: string; error?: string }>;
 }) {
-  const { callbackUrl } = await searchParams;
+  const { callbackUrl, error } = await searchParams;
   return (
     <AuthCard title="Sign in to SnipVault" subtitle="Access your prompt library">
       <SignInForm
         providers={enabledOAuthProviders}
         allowRegister={selfRegistrationEnabled()}
         callbackUrl={safeCallback(callbackUrl)}
+        initialError={error}
       />
     </AuthCard>
   );
