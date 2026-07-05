@@ -1,0 +1,20 @@
+services:
+  snipvault:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: snipvault:2.0.1
+    container_name: snipvault
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      # SQLite file location inside the container (persisted via the volume below)
+      DATABASE_PATH: /app/data/snippets.db
+    volumes:
+      # Named volume keeps your prompts across container rebuilds/restarts.
+      # To use a host folder instead, replace with:  ./data:/app/data
+      - snipvault-data:/app/data
+
+volumes:
+  snipvault-data:

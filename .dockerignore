@@ -1,0 +1,32 @@
+# Dependencies & build output (rebuilt inside the image)
+node_modules
+.next
+out
+dist
+
+# Local database / data — must NOT bake into the image; comes from a volume
+data
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# Env & secrets
+.env
+.env.local
+.env*.local
+
+# Git & tooling
+.git
+.gitignore
+.vscode
+.idea
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# Docs & misc not needed at build time
+*.md
+!README.md
