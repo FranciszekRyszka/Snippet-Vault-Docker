@@ -2,13 +2,27 @@ import { db, rowToSnippet } from "@/lib/db";
 import { NextResponse } from "next/server";
 import { LANGUAGES } from "@/lib/languages";
 import { parseId, sanitizeTags, sanitizeModel } from "@/lib/api-utils";
+import { getSessionUser, unauthorized } from "@/lib/api-auth";
+import { writableOwnerIds } from "@/lib/access";
 
 const validLanguages = LANGUAGES.map((l) => l.value);
+
+// SQL fragment + params for "owned by me or shared-with-me for writing".
+function writableScope(userId: string): { clause: string; params: string[] } {
+  const owners = writableOwnerIds(userId);
+  return {
+    clause: `owner_id IN (${owners.map(() => "?").join(",")})`,
+    params: owners,
+  };
+}
 
 export async function PUT(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const user = await getSessionUser();
+  if (!user) return unauthorized();
+
   const { id } = await params;
   const numericId = parseId(id);
   if (numericId === null) {
@@ -42,10 +56,11 @@ export async function PUT(
     const sanitizedTags = sanitizeTags(tags);
     const sanitizedModel = sanitizeModel(model);
 
+    const scope = writableScope(user.id);
     const stmt = db.prepare(`
       UPDATE snippets
       SET title = ?, description = ?, code = ?, language = ?, tags = ?, model = ?, updated_at = datetime('now')
-      WHERE id = ?
+      WHERE id = ? AND ${scope.clause}
     `);
 
     const result = stmt.run(
@@ -55,7 +70,8 @@ export async function PUT(
       language,
       JSON.stringify(sanitizedTags),
       sanitizedModel,
-      numericId
+      numericId,
+      ...scope.params
     );
 
     if (result.changes === 0) {
@@ -82,6 +98,9 @@ export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const user = await getSessionUser();
+  if (!user) return unauthorized();
+
   const { id } = await params;
   const numericId = parseId(id);
   if (numericId === null) {
@@ -98,10 +117,11 @@ export async function PATCH(
       );
     }
 
+    const scope = writableScope(user.id);
     const stmt = db.prepare(
-      "UPDATE snippets SET favorite = ? WHERE id = ?"
+      `UPDATE snippets SET favorite = ? WHERE id = ? AND ${scope.clause}`
     );
-    const result = stmt.run(favorite ? 1 : 0, numericId);
+    const result = stmt.run(favorite ? 1 : 0, numericId, ...scope.params);
 
     if (result.changes === 0) {
       return NextResponse.json({ error: "Snippet not found" }, { status: 404 });
@@ -125,14 +145,20 @@ export async function DELETE(
   _request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const user = await getSessionUser();
+  if (!user) return unauthorized();
+
   const { id } = await params;
   const numericId = parseId(id);
   if (numericId === null) {
     return NextResponse.json({ error: "Invalid id" }, { status: 400 });
   }
   try {
-    const stmt = db.prepare("DELETE FROM snippets WHERE id = ?");
-    const result = stmt.run(numericId);
+    const scope = writableScope(user.id);
+    const stmt = db.prepare(
+      `DELETE FROM snippets WHERE id = ? AND ${scope.clause}`
+    );
+    const result = stmt.run(numericId, ...scope.params);
 
     if (result.changes === 0) {
       return NextResponse.json(

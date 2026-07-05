@@ -10,6 +10,7 @@ import {
   Star,
   Download,
   Cpu,
+  Users,
 } from "lucide-react";
 import { getLanguageLabel } from "@/lib/languages";
 import { getPromptStats, formatCount } from "@/lib/prompt-stats";
@@ -26,6 +27,9 @@ type SnippetCardProps = {
   onToggleFavorite: (id: number, favorite: boolean) => void;
   onOpen: (snippet: Snippet) => void;
   onCopied: (id: number) => void;
+  // Shared-with-me snippet the user can't edit: hide pin/edit/delete, keep
+  // copy/export, and show whose library it came from.
+  readOnly?: boolean;
 };
 
 // Build a filename-safe slug from a title for exports.
@@ -72,8 +76,15 @@ export function SnippetCard({
   onToggleFavorite,
   onOpen,
   onCopied,
+  readOnly = false,
 }: SnippetCardProps) {
   const [copied, setCopied] = useState(false);
+
+  // Owner label for the "Shared with me" view.
+  const ownerLabel =
+    !snippet.is_owner && (snippet.owner_name || snippet.owner_email)
+      ? snippet.owner_name || snippet.owner_email
+      : null;
 
   const date = new Date(snippet.created_at).toLocaleDateString("en-US", {
     month: "short",
@@ -97,7 +108,7 @@ export function SnippetCard({
     }
   };
 
-  const starButton = (
+  const starButton = readOnly ? null : (
     <button
       onClick={() => onToggleFavorite(snippet.id, !snippet.favorite)}
       className={`flex h-7 w-7 items-center justify-center rounded-md transition-colors ${
@@ -132,22 +143,37 @@ export function SnippetCard({
       >
         <Download className="h-3.5 w-3.5" />
       </button>
-      <button
-        onClick={() => onEdit(snippet)}
-        className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-        aria-label="Edit prompt"
-      >
-        <Pencil className="h-3.5 w-3.5" />
-      </button>
-      <button
-        onClick={() => onDelete(snippet)}
-        className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
-        aria-label="Delete prompt"
-      >
-        <Trash2 className="h-3.5 w-3.5" />
-      </button>
+      {!readOnly && (
+        <>
+          <button
+            onClick={() => onEdit(snippet)}
+            className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            aria-label="Edit prompt"
+          >
+            <Pencil className="h-3.5 w-3.5" />
+          </button>
+          <button
+            onClick={() => onDelete(snippet)}
+            className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+            aria-label="Delete prompt"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+        </>
+      )}
     </div>
   );
+
+  // Small "shared by …" chip shown in the Shared-with-me view.
+  const ownerBadge = ownerLabel ? (
+    <span
+      className="inline-flex items-center gap-1 rounded-md bg-accent px-2 py-0.5 text-xs font-medium text-muted-foreground"
+      title={snippet.owner_email ? `Shared by ${snippet.owner_email}` : undefined}
+    >
+      <Users className="h-3 w-3" />
+      {ownerLabel}
+    </span>
+  ) : null;
 
   const modelBadge = snippet.model ? (
     <button
@@ -198,6 +224,12 @@ export function SnippetCard({
             <span className="rounded bg-primary/10 px-1.5 py-0.5 font-medium text-primary">
               {getLanguageLabel(snippet.language)}
             </span>
+            {ownerLabel && (
+              <span className="inline-flex items-center gap-1 text-muted-foreground">
+                <Users className="h-3 w-3" />
+                {ownerLabel}
+              </span>
+            )}
             {snippet.model && (
               <span className="inline-flex items-center gap-1">
                 <Cpu className="h-3 w-3" />
@@ -250,6 +282,7 @@ export function SnippetCard({
           <span className="inline-flex items-center rounded-md bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
             {getLanguageLabel(snippet.language)}
           </span>
+          {ownerBadge}
           {modelBadge}
           {tagChips}
           {tags.length > 5 && (

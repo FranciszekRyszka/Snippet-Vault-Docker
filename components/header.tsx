@@ -3,6 +3,7 @@
 import { Code2, Moon, Sun, Plus, Settings, Upload } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useEffect, useState } from "react";
+import { UserMenu } from "@/components/user-menu";
 
 export function Header({
   onNewSnippet,
@@ -77,6 +78,7 @@ export function Header({
               )}
             </button>
           )}
+          <UserMenu />
         </div>
       </div>
     </header>

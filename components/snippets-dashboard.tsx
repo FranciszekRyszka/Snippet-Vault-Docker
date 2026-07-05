@@ -30,7 +30,8 @@ import {
   type CreateSnippetInput,
 } from "@/lib/tauri-api";
 import { LANGUAGES } from "@/lib/languages";
-import { Cpu, Loader2, X } from "lucide-react";
+import { ShareDialog } from "./share-dialog";
+import { Cpu, Loader2, X, Share2 } from "lucide-react";
 
 export function SnippetsDashboard() {
   const [snippets, setSnippets] = useState<Snippet[]>([]);
@@ -55,6 +56,9 @@ export function SnippetsDashboard() {
   const [favoritesOnly, setFavoritesOnly] = useState(false);
   const [activeModel, setActiveModel] = useState("");
   const [view, setView] = useState<ViewMode>("grid");
+  // Which library to show: your own, or the ones shared with you.
+  const [scope, setScope] = useState<"mine" | "shared">("mine");
+  const [showShareDialog, setShowShareDialog] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [editingSnippet, setEditingSnippet] = useState<Snippet | null>(null);
   const [detailId, setDetailId] = useState<number | null>(null);
@@ -135,7 +139,8 @@ export function SnippetsDashboard() {
         language?: string;
         tag?: string;
         searchMode?: string;
-      } = {};
+        scope?: "mine" | "shared";
+      } = { scope };
       if (debouncedSearch) {
         params.search = debouncedSearch;
         params.searchMode = searchMode;
@@ -153,7 +158,7 @@ export function SnippetsDashboard() {
     } finally {
       if (seq === fetchSeq.current) setIsLoading(false);
     }
-  }, [debouncedSearch, language, activeTag, searchMode, dropPendingDeletes]);
+  }, [debouncedSearch, language, activeTag, searchMode, scope, dropPendingDeletes]);
 
   // Fetch all snippets for tag cloud
   const fetchAllSnippets = useCallback(async () => {
@@ -520,6 +525,34 @@ export function SnippetsDashboard() {
           </div>
         )}
 
+        {/* Scope tabs + share control (web multi-user edition). */}
+        {!desktop && (
+          <div className="mb-4 flex items-center justify-between gap-2">
+            <div className="inline-flex rounded-lg border border-border bg-card p-0.5">
+              {(["mine", "shared"] as const).map((s) => (
+                <button
+                  key={s}
+                  onClick={() => setScope(s)}
+                  className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+                    scope === s
+                      ? "bg-primary text-primary-foreground"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {s === "mine" ? "My prompts" : "Shared with me"}
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={() => setShowShareDialog(true)}
+              className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-sm font-medium text-foreground transition-colors hover:bg-accent"
+            >
+              <Share2 className="h-3.5 w-3.5" />
+              Share
+            </button>
+          </div>
+        )}
+
         <div className="mb-6">
           <SearchBar
             search={search}
@@ -614,6 +647,7 @@ export function SnippetsDashboard() {
                   onToggleFavorite={handleToggleFavorite}
                   onOpen={(s) => setDetailId(s.id)}
                   onCopied={handleCopied}
+                  readOnly={scope === "shared" && !snippet.can_write}
                 />
               ))}
             </div>
@@ -622,6 +656,11 @@ export function SnippetsDashboard() {
           <EmptyState hasFilters={hasFilters} onNewSnippet={handleNewSnippet} />
         )}
       </main>
+
+      <ShareDialog
+        open={showShareDialog}
+        onClose={() => setShowShareDialog(false)}
+      />
 
       {showForm && (
         <SnippetForm

@@ -2,19 +2,43 @@ import { db, rowToSnippet, type Snippet } from "@/lib/db";
 import { NextResponse } from "next/server";
 import { LANGUAGES } from "@/lib/languages";
 import { escapeLike, sanitizeTags, sanitizeModel } from "@/lib/api-utils";
+import { getSessionUser, unauthorized } from "@/lib/api-auth";
+import { getUsersByIds } from "@/lib/users";
+import {
+  readableOwnerIds,
+  sharedInOwnerIds,
+  writableOwnerIds,
+} from "@/lib/access";
 
 const validLanguages = LANGUAGES.map((l) => l.value);
 
 export async function GET(request: Request) {
+  const user = await getSessionUser();
+  if (!user) return unauthorized();
+
   const { searchParams } = new URL(request.url);
   const language = searchParams.get("language");
   const search = searchParams.get("search");
   const tag = searchParams.get("tag");
   const searchMode = searchParams.get("searchMode") || "all";
+  // scope: "mine" (own library, default), "shared" (libraries shared with me),
+  // or "all" (both).
+  const scope = searchParams.get("scope") || "mine";
 
   try {
-    let query = "SELECT * FROM snippets WHERE 1=1";
-    const params: (string | number)[] = [];
+    const ownerIds =
+      scope === "shared"
+        ? sharedInOwnerIds(user.id)
+        : scope === "all"
+        ? readableOwnerIds(user.id)
+        : [user.id];
+
+    // No accessible libraries in this scope → empty list (avoids an `IN ()`).
+    if (ownerIds.length === 0) return NextResponse.json([]);
+
+    const ownerPlaceholders = ownerIds.map(() => "?").join(",");
+    let query = `SELECT * FROM snippets WHERE owner_id IN (${ownerPlaceholders})`;
+    const params: (string | number)[] = [...ownerIds];
 
     // Language filter
     if (language) {
@@ -51,6 +75,30 @@ export async function GET(request: Request) {
     const rows = stmt.all(...params) as Record<string, unknown>[];
     const snippets: Snippet[] = rows.map(rowToSnippet);
 
+    // In shared/all scope, annotate each snippet with its owner (for display)
+    // and whether this user may edit it. Skipped for "mine" — all yours, all
+    // writable — to avoid the extra lookups.
+    if (scope !== "mine") {
+      const writable = new Set(writableOwnerIds(user.id));
+      const owners = getUsersByIds([
+        ...new Set(snippets.map((s) => (s as Snippet & { owner_id?: string }).owner_id ?? "")),
+      ]);
+      for (const s of snippets) {
+        const owner = (s as Snippet & { owner_id?: string }).owner_id ?? "";
+        const meta = s as Snippet & {
+          owner_id?: string;
+          owner_name?: string;
+          owner_email?: string;
+          can_write?: boolean;
+          is_owner?: boolean;
+        };
+        meta.owner_name = owners[owner]?.name ?? "";
+        meta.owner_email = owners[owner]?.email ?? "";
+        meta.is_owner = owner === user.id;
+        meta.can_write = writable.has(owner);
+      }
+    }
+
     return NextResponse.json(snippets);
   } catch (error) {
     console.error("Failed to fetch snippets:", error);
@@ -62,6 +110,9 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  const user = await getSessionUser();
+  if (!user) return unauthorized();
+
   try {
     const body = await request.json();
     const { title, description, code, language, tags, model } = body;
@@ -91,8 +142,8 @@ export async function POST(request: Request) {
     const sanitizedModel = sanitizeModel(model);
 
     const stmt = db.prepare(`
-      INSERT INTO snippets (title, description, code, language, tags, model)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO snippets (title, description, code, language, tags, model, owner_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
 
     const result = stmt.run(
@@ -101,7 +152,8 @@ export async function POST(request: Request) {
       code,
       language,
       JSON.stringify(sanitizedTags),
-      sanitizedModel
+      sanitizedModel,
+      user.id
     );
 
     const newSnippet = db.prepare("SELECT * FROM snippets WHERE id = ?").get(result.lastInsertRowid) as Record<string, unknown>;
