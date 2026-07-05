@@ -11,21 +11,99 @@ picker, one-click backup) in favor of a stateless server + mounted volume.
 
 ## Quick start
 
+**1. Create your `.env`** (compose reads it automatically). At minimum, set
+`AUTH_SECRET`:
+
+```bash
+cp .env.example .env
+# generate a secret and paste it as AUTH_SECRET=...
+openssl rand -base64 32
+# or: node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+```
+
+**2. Start it:**
+
 ```bash
 docker compose up -d --build
 ```
 
-Then open **http://localhost:3000**. Your prompts persist in the
+Then open **http://localhost:3000** and create the first account (see
+[First run](#first-run) — it becomes the admin). Your prompts persist in the
 `snipvault-data` Docker volume across restarts and rebuilds.
 
 Stop it with `docker compose down` (add `-v` to also delete the data volume).
+
+> Compose **requires** `AUTH_SECRET` — it errors out immediately if it's unset,
+> so don't skip step 1.
+
+## Configuring `docker-compose.yml`
+
+Everything is driven by variables in `.env`, so you rarely edit
+`docker-compose.yml` itself. The three things people change most:
+
+### Change the port
+
+The published port is the **host** side of the mapping (`"${HOST_PORT:-3000}:3000"`).
+Set `HOST_PORT` in `.env` — the container always listens on `3000` internally:
+
+```dotenv
+HOST_PORT=8080
+AUTH_URL=http://localhost:8080   # keep this in sync with how you open the app
+```
+
+`docker compose up -d` → app is now on **http://localhost:8080**.
+
+Bind to loopback only (e.g. when a reverse proxy sits in front on the same host):
+
+```dotenv
+HOST_PORT=127.0.0.1:8080
+```
+
+### Point it at a URL / domain
+
+`AUTH_URL` is the public address users actually open — it's used to build
+sign-in redirects and OAuth callbacks, so it **must** match the browser URL:
+
+| How you reach it            | `AUTH_URL`                      |
+| --------------------------- | ------------------------------- |
+| Default local               | `http://localhost:3000`         |
+| Custom host port            | `http://localhost:8080`         |
+| Another machine on the LAN  | `http://192.168.1.50:3000`      |
+| A domain (reverse proxy)    | `https://prompts.example.com`   |
+
+For a real domain, run a reverse proxy that terminates HTTPS and forwards to the
+container. Minimal **Caddy** example (`Caddyfile`), which also gets you a free
+TLS certificate:
+
+```caddyfile
+prompts.example.com {
+    reverse_proxy 127.0.0.1:3000
+}
+```
+
+Then set `AUTH_URL=https://prompts.example.com` and, if you use OAuth, register
+the callback `https://prompts.example.com/api/auth/callback/github` (and/or
+`.../google`) in the provider. See the
+[**wiki**](https://github.com/FranciszekRyszka/Snippet-Vault-Docker/wiki) for
+full nginx / Traefik examples and more deployment scenarios.
+
+### Use a host folder instead of a named volume
+
+Swap the volume line to bind-mount a directory you can back up directly:
+
+```yaml
+volumes:
+  - ./data:/app/data      # was: snipvault-data:/app/data
+```
 
 ### Without compose
 
 ```bash
 docker build -t snipvault:2.0.1 .
 docker run -d --name snipvault \
-  -p 3000:3000 \
+  -p 8080:3000 \
+  -e AUTH_SECRET="$(openssl rand -base64 32)" \
+  -e AUTH_URL=http://localhost:8080 \
   -v snipvault-data:/app/data \
   snipvault:2.0.1
 ```
@@ -86,10 +164,12 @@ user has their own private library.
 | `AUTH_URL`                | `http://localhost:3000` | Public app URL; used to build OAuth callback URLs.               |
 | `ADMIN_EMAIL`             | — (unset)               | Email granted admin. If unset, the first account becomes admin.  |
 | `ALLOW_SELF_REGISTRATION` | `false`                 | Allow public self-signup of password accounts.                   |
+| `ALLOWED_EMAILS`          | — (unset)               | Comma-separated sign-in allowlist. Empty = unrestricted.         |
 | `AUTH_GOOGLE_ID` / `_SECRET` | — (unset)            | Enable Google login when both are set.                           |
 | `AUTH_GITHUB_ID` / `_SECRET` | — (unset)            | Enable GitHub login when both are set.                           |
+| `HOST_PORT`               | `3000`                  | Host port the app is published on (host side of the mapping).    |
 | `DATABASE_PATH`           | `/app/data/snippets.db` | Absolute path to the SQLite file.                                |
-| `PORT`                    | `3000`                  | Port the server listens on inside the container.                 |
+| `PORT`                    | `3000`                  | Port the server listens on **inside** the container (rarely changed). |
 | `HOSTNAME`                | `0.0.0.0`               | Bind address (set in the image; leave as-is).                    |
 
 Copy `.env.example` to `.env` to set these via compose.

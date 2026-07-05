@@ -7,7 +7,10 @@ services:
     container_name: snipvault
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      # host:container. Change the HOST side (via HOST_PORT in .env) to expose
+      # the app on a different port. The container always listens on 3000.
+      # Set HOST_PORT=127.0.0.1:8080 to also bind to loopback only.
+      - "${HOST_PORT:-3000}:3000"
     environment:
       # SQLite file location inside the container (persisted via the volume below)
       DATABASE_PATH: /app/data/snippets.db
