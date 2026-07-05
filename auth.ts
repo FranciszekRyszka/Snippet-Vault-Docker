@@ -4,7 +4,11 @@ import Credentials from "next-auth/providers/credentials";
 import Google from "next-auth/providers/google";
 import GitHub from "next-auth/providers/github";
 import { authConfig } from "./auth.config";
-import { verifyCredentials, upsertOAuthUser } from "@/lib/users";
+import {
+  verifyCredentials,
+  upsertOAuthUser,
+  getUserByEmail,
+} from "@/lib/users";
 
 // This module is Node-only (it imports the SQLite-backed user store). It's used
 // by the API route handlers and server components, NOT by middleware.
@@ -62,8 +66,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     ...authConfig.callbacks,
     // For OAuth logins, resolve (or create) the canonical account by verified
     // email and reject disabled users. Credentials logins are already vetted in
-    // authorize(). We stash the db id + role on `user` so jwt() (in auth.config)
-    // reads them.
+    // authorize().
     async signIn({ user, account, profile }) {
       if (account?.provider === "google" || account?.provider === "github") {
         const email = user.email ?? (profile?.email as string | undefined);
@@ -78,6 +81,22 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         user.role = dbUser.role;
       }
       return true;
+    },
+    // Authoritative id + role, read from the DB at sign-in by email. This does
+    // NOT depend on signIn() mutations reaching the token (which is unreliable
+    // in Auth.js v5 for OAuth), so admin promotions take effect on next login
+    // for password AND OAuth accounts alike. Overrides the edge jwt in
+    // auth.config; that one only passes the token through on later requests.
+    async jwt({ token, user }) {
+      const email = user?.email ?? token.email;
+      if (user && email) {
+        const dbUser = getUserByEmail(email);
+        if (dbUser) {
+          token.uid = dbUser.id;
+          token.role = dbUser.role;
+        }
+      }
+      return token;
     },
   },
 });
