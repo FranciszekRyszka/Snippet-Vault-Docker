@@ -18,6 +18,10 @@ const db = new Database(dbPath);
 
 // Enable WAL mode for better concurrency
 db.pragma("journal_mode = WAL");
+// Wait (don't immediately error) if another connection holds a write lock. The
+// production server is single-process, but `next build` imports this module in
+// ~15 parallel workers that all run the migrations below against one file.
+db.pragma("busy_timeout = 5000");
 
 // Initialize the database schema
 db.exec(`
@@ -33,6 +37,36 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_snippets_language ON snippets(language);
   CREATE INDEX IF NOT EXISTS idx_snippets_created_at ON snippets(created_at);
+
+  -- Accounts. A user may authenticate via password (password_hash set) and/or
+  -- OAuth (password_hash NULL). One row per person, keyed by verified email.
+  CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY,
+    email TEXT NOT NULL UNIQUE,
+    name TEXT DEFAULT '',
+    image TEXT,
+    password_hash TEXT,
+    role TEXT NOT NULL DEFAULT 'user',
+    disabled INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+
+  -- Library-level sharing: owner grants another person (by email) access to
+  -- their whole library. shared_with_id is filled in when that person exists;
+  -- until then the share is "pending" and resolves on their first login.
+  CREATE TABLE IF NOT EXISTS library_shares (
+    id TEXT PRIMARY KEY,
+    owner_id TEXT NOT NULL,
+    shared_with_email TEXT NOT NULL,
+    shared_with_id TEXT,
+    permission TEXT NOT NULL DEFAULT 'read',
+    created_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(owner_id, shared_with_email)
+  );
+  CREATE INDEX IF NOT EXISTS idx_shares_owner ON library_shares(owner_id);
+  CREATE INDEX IF NOT EXISTS idx_shares_with ON library_shares(shared_with_id);
 `);
 
 // Migrations: add columns introduced after the initial schema to older
@@ -43,15 +77,27 @@ const existingColumns = new Set(
   )
 );
 const addColumn = (name: string, definition: string) => {
-  if (!existingColumns.has(name)) {
+  if (existingColumns.has(name)) return;
+  try {
     db.exec(`ALTER TABLE snippets ADD COLUMN ${definition}`);
-    existingColumns.add(name);
+  } catch (err) {
+    // Another parallel worker may have added it between our PRAGMA read and now.
+    // Idempotent: swallow the duplicate, rethrow anything else.
+    if (!(err instanceof Error) || !/duplicate column/i.test(err.message)) {
+      throw err;
+    }
   }
+  existingColumns.add(name);
 };
 addColumn("favorite", "favorite INTEGER NOT NULL DEFAULT 0");
 addColumn("model", "model TEXT NOT NULL DEFAULT ''");
 addColumn("copy_count", "copy_count INTEGER NOT NULL DEFAULT 0");
 addColumn("last_used_at", "last_used_at TEXT");
+// Multi-user: every snippet belongs to a user. Rows created before auth existed
+// have owner_id NULL ("orphans") and are invisible until the first admin claims
+// them on first login (see lib/users.ts:claimOrphanSnippets).
+addColumn("owner_id", "owner_id TEXT");
+db.exec("CREATE INDEX IF NOT EXISTS idx_snippets_owner ON snippets(owner_id)");
 
 export { db };
 

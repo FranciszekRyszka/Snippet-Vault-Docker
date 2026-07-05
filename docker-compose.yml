@@ -11,6 +11,16 @@ services:
     environment:
       # SQLite file location inside the container (persisted via the volume below)
       DATABASE_PATH: /app/data/snippets.db
+      # --- Auth (values come from your .env file; see .env.example) ---
+      # AUTH_SECRET is required — compose errors out with this message if unset.
+      AUTH_SECRET: ${AUTH_SECRET:?Set AUTH_SECRET in .env (see .env.example)}
+      AUTH_URL: ${AUTH_URL:-http://localhost:3000}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
+      ALLOW_SELF_REGISTRATION: ${ALLOW_SELF_REGISTRATION:-false}
+      AUTH_GITHUB_ID: ${AUTH_GITHUB_ID:-}
+      AUTH_GITHUB_SECRET: ${AUTH_GITHUB_SECRET:-}
+      AUTH_GOOGLE_ID: ${AUTH_GOOGLE_ID:-}
+      AUTH_GOOGLE_SECRET: ${AUTH_GOOGLE_SECRET:-}
     volumes:
       # Named volume keeps your prompts across container rebuilds/restarts.
       # To use a host folder instead, replace with:  ./data:/app/data

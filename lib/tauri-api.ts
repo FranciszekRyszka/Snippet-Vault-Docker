@@ -12,7 +12,26 @@ export type Snippet = {
   last_used_at: string | null;
   created_at: string;
   updated_at: string;
+  // Present in the web (multi-user) edition. In "shared" views the API also
+  // annotates each snippet with its owner and whether this user may edit it.
+  owner_id?: string;
+  owner_name?: string;
+  owner_email?: string;
+  is_owner?: boolean;
+  can_write?: boolean;
 };
+
+// A library-sharing grant the current user has made.
+export type Share = {
+  id: string;
+  email: string;
+  permission: "read" | "write";
+  accepted: boolean;
+  created_at: string;
+};
+
+// Which library to list. "mine" (default), "shared" (shared with me), "all".
+export type SnippetScope = "mine" | "shared" | "all";
 
 export type CreateSnippetInput = {
   title: string;
@@ -70,6 +89,7 @@ export async function getSnippets(params?: {
   language?: string;
   tag?: string;
   searchMode?: string;
+  scope?: SnippetScope;
 }): Promise<Snippet[]> {
   if (isTauri()) {
     return invoke<Snippet[]>("get_snippets", {
@@ -87,11 +107,41 @@ export async function getSnippets(params?: {
   }
   if (params?.language) searchParams.set("language", params.language);
   if (params?.tag) searchParams.set("tag", params.tag);
+  if (params?.scope && params.scope !== "mine") {
+    searchParams.set("scope", params.scope);
+  }
 
   const qs = searchParams.toString();
   const res = await fetch(`/api/snippets${qs ? `?${qs}` : ""}`);
   if (!res.ok) throw new Error("Failed to fetch snippets");
   return res.json();
+}
+
+// ---- Library sharing (web only) -------------------------------------------
+
+export async function listShares(): Promise<Share[]> {
+  const res = await fetch("/api/shares");
+  await throwIfNotOk(res, "Failed to load shares");
+  return res.json();
+}
+
+export async function createShare(
+  email: string,
+  permission: "read" | "write"
+): Promise<Share> {
+  const res = await fetch("/api/shares", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, permission }),
+  });
+  await throwIfNotOk(res, "Failed to share library");
+  return res.json();
+}
+
+export async function deleteShare(shareId: string): Promise<boolean> {
+  const res = await fetch(`/api/shares/${shareId}`, { method: "DELETE" });
+  await throwIfNotOk(res, "Failed to revoke share");
+  return true;
 }
 
 export async function createSnippet(input: CreateSnippetInput): Promise<Snippet> {

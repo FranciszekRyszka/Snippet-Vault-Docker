@@ -30,15 +30,38 @@ docker run -d --name snipvault \
   snipvault:2.0.1
 ```
 
-## ⚠️ Security — no authentication
+## Authentication & multi-user
 
-The `/api/snippets` routes have **no authentication**. Publishing port 3000 makes
-your library reachable by anyone who can reach the host. Treat this as a
-**single-user, trusted-network** app:
+SnipVault is a **multi-user** app. Every request is gated by a session, and each
+user has their own private library.
 
-- Bind to loopback only — `-p 127.0.0.1:3000:3000` — when running on a shared host.
-- If you need remote access, put it behind a reverse proxy (Caddy, nginx,
-  Traefik) that adds TLS **and** authentication.
+- **Sign-in methods:** email + password (hashed with bcrypt), and optionally
+  **Google** and **GitHub** OAuth. Each OAuth button appears only when its
+  client id/secret are configured, so password login works with zero extra setup.
+- **Roles:** the first account created (or the address in `ADMIN_EMAIL`) becomes
+  an **admin**. Admins get a dashboard at **`/admin`** to create, edit, disable,
+  reset passwords for, and delete users.
+- **Registration:** disabled by default (`ALLOW_SELF_REGISTRATION=false`) —
+  admins create accounts. Set it to `true` to allow public self-signup.
+- **Library sharing:** any user can share their whole library with another
+  person by email, granting **read** or **write** access. Shared libraries show
+  up under the "Shared with me" tab. Invites to people without an account yet
+  apply automatically when they sign up.
+
+### First run
+
+1. Set at least `AUTH_SECRET` (and `AUTH_URL` in production) in `.env` — see
+   `.env.example`.
+2. Start the app and open `/signin`. Create the first account (temporarily set
+   `ALLOW_SELF_REGISTRATION=true`, or set `ADMIN_EMAIL` and register once) — it
+   becomes the admin. Any snippets from before auth was added are adopted by
+   this admin.
+3. From **`/admin`**, create accounts for everyone else.
+
+> **Still add TLS for remote access.** Auth protects the data, but you should
+> front the app with a reverse proxy (Caddy, nginx, Traefik) that terminates
+> **HTTPS** before exposing it to the internet — sessions and passwords must not
+> travel over plain HTTP.
 
 ## Data & persistence
 
@@ -57,16 +80,24 @@ your library reachable by anyone who can reach the host. Treat this as a
 
 ## Configuration
 
-| Variable        | Default                    | Description                                    |
-| --------------- | -------------------------- | ---------------------------------------------- |
-| `DATABASE_PATH` | `/app/data/snippets.db`    | Absolute path to the SQLite file.              |
-| `PORT`          | `3000`                     | Port the server listens on inside the container. |
-| `HOSTNAME`      | `0.0.0.0`                  | Bind address (set in the image; leave as-is).  |
+| Variable                  | Default                 | Description                                                      |
+| ------------------------- | ----------------------- | ---------------------------------------------------------------- |
+| `AUTH_SECRET`             | — (**required**)        | Secret used to sign session JWTs. `openssl rand -base64 32`.     |
+| `AUTH_URL`                | `http://localhost:3000` | Public app URL; used to build OAuth callback URLs.               |
+| `ADMIN_EMAIL`             | — (unset)               | Email granted admin. If unset, the first account becomes admin.  |
+| `ALLOW_SELF_REGISTRATION` | `false`                 | Allow public self-signup of password accounts.                   |
+| `AUTH_GOOGLE_ID` / `_SECRET` | — (unset)            | Enable Google login when both are set.                           |
+| `AUTH_GITHUB_ID` / `_SECRET` | — (unset)            | Enable GitHub login when both are set.                           |
+| `DATABASE_PATH`           | `/app/data/snippets.db` | Absolute path to the SQLite file.                                |
+| `PORT`                    | `3000`                  | Port the server listens on inside the container.                 |
+| `HOSTNAME`                | `0.0.0.0`               | Bind address (set in the image; leave as-is).                    |
 
-Copy `.env.example` to `.env` to override these via compose.
+Copy `.env.example` to `.env` to set these via compose.
 
 ## Features
 
+- 🔐 Multi-user auth (email/password + optional Google & GitHub), private per-user libraries
+- 👥 Library sharing (read/write) and an admin dashboard for user management
 - 📝 Create, edit, and delete prompts
 - 🎨 Syntax highlighting for 35 languages (highlight.js)
 - 🏷️ Tags with autocomplete, search, and filtering

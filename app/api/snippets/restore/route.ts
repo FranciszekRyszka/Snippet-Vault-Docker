@@ -6,6 +6,7 @@ import {
   sanitizeModel,
   validTimestampOr,
 } from "@/lib/api-utils";
+import { getSessionUser, unauthorized } from "@/lib/api-auth";
 
 const validLanguages = new Set<string>(LANGUAGES.map((l) => l.value));
 
@@ -16,6 +17,9 @@ const validLanguages = new Set<string>(LANGUAGES.map((l) => l.value));
 // request can't inject a fractional copy_count (which would later break reads),
 // a "truthy" favorite, or an out-of-range timestamp.
 export async function POST(request: Request) {
+  const user = await getSessionUser();
+  if (!user) return unauthorized();
+
   try {
     const body = await request.json();
     const {
@@ -69,8 +73,8 @@ export async function POST(request: Request) {
     const lastUsedAt = validTimestampOr(last_used_at, null);
 
     const stmt = db.prepare(`
-      INSERT INTO snippets (title, description, code, language, tags, favorite, model, copy_count, last_used_at, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO snippets (title, description, code, language, tags, favorite, model, copy_count, last_used_at, created_at, updated_at, owner_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const result = stmt.run(
@@ -84,7 +88,8 @@ export async function POST(request: Request) {
       sanitizedCopyCount,
       lastUsedAt,
       createdAt,
-      updatedAt
+      updatedAt,
+      user.id
     );
 
     const restored = db

@@ -1,22 +1,29 @@
 import { db, rowToSnippet } from "@/lib/db";
 import { NextResponse } from "next/server";
 import { parseId } from "@/lib/api-utils";
+import { getSessionUser, unauthorized } from "@/lib/api-auth";
+import { readableOwnerIds } from "@/lib/access";
 
 // Record that a snippet was copied: bump its usage count and stamp the time.
 export async function POST(
   _request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const user = await getSessionUser();
+  if (!user) return unauthorized();
+
   const { id } = await params;
   const numericId = parseId(id);
   if (numericId === null) {
     return NextResponse.json({ error: "Invalid id" }, { status: 400 });
   }
   try {
+    const owners = readableOwnerIds(user.id);
+    const placeholders = owners.map(() => "?").join(",");
     const stmt = db.prepare(
-      "UPDATE snippets SET copy_count = copy_count + 1, last_used_at = datetime('now') WHERE id = ?"
+      `UPDATE snippets SET copy_count = copy_count + 1, last_used_at = datetime('now') WHERE id = ? AND owner_id IN (${placeholders})`
     );
-    const result = stmt.run(numericId);
+    const result = stmt.run(numericId, ...owners);
 
     if (result.changes === 0) {
       return NextResponse.json({ error: "Snippet not found" }, { status: 404 });
