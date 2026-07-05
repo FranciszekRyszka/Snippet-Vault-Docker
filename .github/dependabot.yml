@@ -1,0 +1,37 @@
+# Dependabot keeps dependencies patched and opens PRs for known CVEs.
+# Security updates (vulnerability-driven PRs) are also enabled in the repo
+# settings; this file configures the scheduled version-update checks.
+# Docs: https://docs.github.com/code-security/dependabot
+version: 2
+updates:
+  # Application dependencies (pnpm lockfile at the repo root).
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+    commit-message:
+      prefix: "chore(deps)"
+      prefix-development: "chore(deps-dev)"
+    # Collapse routine minor/patch bumps into one PR to cut noise; majors
+    # (and security fixes) still come through as their own PRs.
+    groups:
+      npm-minor-and-patch:
+        update-types:
+          - "minor"
+          - "patch"
+
+  # Docker base image in the Dockerfile (e.g. node:26-slim).
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    labels:
+      - "dependencies"
+      - "docker"
+    commit-message:
+      prefix: "chore(docker)"
