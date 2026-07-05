@@ -3,11 +3,13 @@
 ##############################
 # Base: Node + pnpm (Corepack)
 ##############################
-FROM node:22-bookworm-slim AS base
+FROM node:26-slim AS base
 ENV PNPM_HOME="/pnpm" \
     PATH="/pnpm:$PATH" \
     NEXT_TELEMETRY_DISABLED=1
-RUN corepack enable
+# Node 26 no longer bundles Corepack, so install it before enabling. Corepack
+# then activates the pnpm version pinned in package.json's "packageManager".
+RUN npm install -g corepack@latest && corepack enable
 WORKDIR /app
 
 ##############################
@@ -35,7 +37,7 @@ RUN pnpm build
 ##############################
 # Runner: minimal runtime image
 ##############################
-FROM node:22-bookworm-slim AS runner
+FROM node:26-slim AS runner
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
     HOSTNAME=0.0.0.0 \
