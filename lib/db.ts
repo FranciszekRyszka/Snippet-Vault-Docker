@@ -10,96 +10,124 @@ const dbPath =
     ? process.env.DATABASE_PATH
     : path.join(process.cwd(), "data", "snippets.db");
 
-// Ensure the parent directory exists — on first boot the mounted volume may be
-// empty, and better-sqlite3 won't create missing directories itself.
-fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+// The connection is created lazily on first use, not at import time. `next build`
+// imports every API route module (in ~15 parallel workers) purely to collect page
+// data — it never invokes the handlers — so opening the database and running
+// migrations at import made all those workers race on one SQLite file, which
+// intermittently failed the build. With lazy init the build never touches the DB;
+// at runtime the single server process initializes once, synchronously, on the
+// first query.
+let connection: Database.Database | null = null;
 
-const db = new Database(dbPath);
+function initDb(): Database.Database {
+  if (connection) return connection;
 
-// Enable WAL mode for better concurrency
-db.pragma("journal_mode = WAL");
-// Wait (don't immediately error) if another connection holds a write lock. The
-// production server is single-process, but `next build` imports this module in
-// ~15 parallel workers that all run the migrations below against one file.
-db.pragma("busy_timeout = 5000");
+  // Ensure the parent directory exists — on first boot the mounted volume may be
+  // empty, and better-sqlite3 won't create missing directories itself.
+  fs.mkdirSync(path.dirname(dbPath), { recursive: true });
 
-// Initialize the database schema
-db.exec(`
-  CREATE TABLE IF NOT EXISTS snippets (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    title TEXT NOT NULL,
-    description TEXT DEFAULT '',
-    code TEXT NOT NULL,
-    language TEXT NOT NULL,
-    tags TEXT DEFAULT '[]',
-    created_at TEXT DEFAULT (datetime('now')),
-    updated_at TEXT DEFAULT (datetime('now'))
+  const database = new Database(dbPath);
+
+  // Enable WAL mode for better concurrency.
+  database.pragma("journal_mode = WAL");
+  // Wait (don't immediately error) if another connection holds a write lock. The
+  // server is single-process, but a rolling deploy can briefly run two containers
+  // against one mounted file, so keep the timeout as defence.
+  database.pragma("busy_timeout = 5000");
+
+  // Initialize the database schema.
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS snippets (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL,
+      description TEXT DEFAULT '',
+      code TEXT NOT NULL,
+      language TEXT NOT NULL,
+      tags TEXT DEFAULT '[]',
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_snippets_language ON snippets(language);
+    CREATE INDEX IF NOT EXISTS idx_snippets_created_at ON snippets(created_at);
+
+    -- Accounts. A user may authenticate via password (password_hash set) and/or
+    -- OAuth (password_hash NULL). One row per person, keyed by verified email.
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      email TEXT NOT NULL UNIQUE,
+      name TEXT DEFAULT '',
+      image TEXT,
+      password_hash TEXT,
+      role TEXT NOT NULL DEFAULT 'user',
+      disabled INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+
+    -- Library-level sharing: owner grants another person (by email) access to
+    -- their whole library. shared_with_id is filled in when that person exists;
+    -- until then the share is "pending" and resolves on their first login.
+    CREATE TABLE IF NOT EXISTS library_shares (
+      id TEXT PRIMARY KEY,
+      owner_id TEXT NOT NULL,
+      shared_with_email TEXT NOT NULL,
+      shared_with_id TEXT,
+      permission TEXT NOT NULL DEFAULT 'read',
+      created_at TEXT DEFAULT (datetime('now')),
+      UNIQUE(owner_id, shared_with_email)
+    );
+    CREATE INDEX IF NOT EXISTS idx_shares_owner ON library_shares(owner_id);
+    CREATE INDEX IF NOT EXISTS idx_shares_with ON library_shares(shared_with_id);
+  `);
+
+  // Migrations: add columns introduced after the initial schema to older
+  // databases. Each is guarded so it runs at most once.
+  const existingColumns = new Set(
+    (
+      database.prepare("PRAGMA table_info(snippets)").all() as { name: string }[]
+    ).map((c) => c.name)
   );
-  CREATE INDEX IF NOT EXISTS idx_snippets_language ON snippets(language);
-  CREATE INDEX IF NOT EXISTS idx_snippets_created_at ON snippets(created_at);
-
-  -- Accounts. A user may authenticate via password (password_hash set) and/or
-  -- OAuth (password_hash NULL). One row per person, keyed by verified email.
-  CREATE TABLE IF NOT EXISTS users (
-    id TEXT PRIMARY KEY,
-    email TEXT NOT NULL UNIQUE,
-    name TEXT DEFAULT '',
-    image TEXT,
-    password_hash TEXT,
-    role TEXT NOT NULL DEFAULT 'user',
-    disabled INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT DEFAULT (datetime('now')),
-    updated_at TEXT DEFAULT (datetime('now'))
-  );
-  CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
-
-  -- Library-level sharing: owner grants another person (by email) access to
-  -- their whole library. shared_with_id is filled in when that person exists;
-  -- until then the share is "pending" and resolves on their first login.
-  CREATE TABLE IF NOT EXISTS library_shares (
-    id TEXT PRIMARY KEY,
-    owner_id TEXT NOT NULL,
-    shared_with_email TEXT NOT NULL,
-    shared_with_id TEXT,
-    permission TEXT NOT NULL DEFAULT 'read',
-    created_at TEXT DEFAULT (datetime('now')),
-    UNIQUE(owner_id, shared_with_email)
-  );
-  CREATE INDEX IF NOT EXISTS idx_shares_owner ON library_shares(owner_id);
-  CREATE INDEX IF NOT EXISTS idx_shares_with ON library_shares(shared_with_id);
-`);
-
-// Migrations: add columns introduced after the initial schema to older
-// databases. Each is guarded so it runs at most once.
-const existingColumns = new Set(
-  (db.prepare("PRAGMA table_info(snippets)").all() as { name: string }[]).map(
-    (c) => c.name
-  )
-);
-const addColumn = (name: string, definition: string) => {
-  if (existingColumns.has(name)) return;
-  try {
-    db.exec(`ALTER TABLE snippets ADD COLUMN ${definition}`);
-  } catch (err) {
-    // Another parallel worker may have added it between our PRAGMA read and now.
-    // Idempotent: swallow the duplicate, rethrow anything else.
-    if (!(err instanceof Error) || !/duplicate column/i.test(err.message)) {
-      throw err;
+  const addColumn = (name: string, definition: string) => {
+    if (existingColumns.has(name)) return;
+    try {
+      database.exec(`ALTER TABLE snippets ADD COLUMN ${definition}`);
+    } catch (err) {
+      // A second process (e.g. mid rolling-deploy) may have added it between our
+      // PRAGMA read and now. Idempotent: swallow the duplicate, rethrow the rest.
+      if (!(err instanceof Error) || !/duplicate column/i.test(err.message)) {
+        throw err;
+      }
     }
-  }
-  existingColumns.add(name);
-};
-addColumn("favorite", "favorite INTEGER NOT NULL DEFAULT 0");
-addColumn("model", "model TEXT NOT NULL DEFAULT ''");
-addColumn("copy_count", "copy_count INTEGER NOT NULL DEFAULT 0");
-addColumn("last_used_at", "last_used_at TEXT");
-// Multi-user: every snippet belongs to a user. Rows created before auth existed
-// have owner_id NULL ("orphans") and are invisible until the first admin claims
-// them on first login (see lib/users.ts:claimOrphanSnippets).
-addColumn("owner_id", "owner_id TEXT");
-db.exec("CREATE INDEX IF NOT EXISTS idx_snippets_owner ON snippets(owner_id)");
+    existingColumns.add(name);
+  };
+  addColumn("favorite", "favorite INTEGER NOT NULL DEFAULT 0");
+  addColumn("model", "model TEXT NOT NULL DEFAULT ''");
+  addColumn("copy_count", "copy_count INTEGER NOT NULL DEFAULT 0");
+  addColumn("last_used_at", "last_used_at TEXT");
+  // Multi-user: every snippet belongs to a user. Rows created before auth existed
+  // have owner_id NULL ("orphans") and are invisible until the first admin claims
+  // them on first login (see lib/users.ts:claimOrphanSnippets).
+  addColumn("owner_id", "owner_id TEXT");
+  database.exec(
+    "CREATE INDEX IF NOT EXISTS idx_snippets_owner ON snippets(owner_id)"
+  );
 
-export { db };
+  connection = database;
+  return connection;
+}
+
+// Lazy singleton: accessing any property (db.prepare, db.transaction, db.exec, …)
+// initializes the connection on first use and forwards to it, bound so methods
+// keep the right `this`. This keeps the plain `db.prepare(...)` call sites across
+// the codebase unchanged while deferring all I/O to runtime.
+export const db = new Proxy({} as Database.Database, {
+  get(_target, prop) {
+    const database = initDb();
+    const value = Reflect.get(database, prop) as unknown;
+    return typeof value === "function" ? value.bind(database) : value;
+  },
+});
 
 export type Snippet = {
   id: number;
