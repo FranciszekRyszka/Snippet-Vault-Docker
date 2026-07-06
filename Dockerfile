@@ -3,7 +3,7 @@
 ##############################
 # Base: Node + pnpm (Corepack)
 ##############################
-FROM node:26-slim AS base
+FROM node:26-alpine AS base
 ENV PNPM_HOME="/pnpm" \
     PATH="/pnpm:$PATH" \
     NEXT_TELEMETRY_DISABLED=1
@@ -16,11 +16,9 @@ WORKDIR /app
 # Deps: install node_modules (with native better-sqlite3 build)
 ##############################
 FROM base AS deps
-# Build toolchain for better-sqlite3's native addon (used if no prebuilt binary
-# matches the platform). Removed automatically — this layer isn't in the runner.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends python3 make g++ ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+# Build toolchain for better-sqlite3's native addon. Alpine is musl-libc, so the
+# addon is compiled from source here. This layer isn't in the runner.
+RUN apk add --no-cache python3 make g++
 COPY package.json pnpm-lock.yaml ./
 RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
     pnpm install --frozen-lockfile
@@ -37,7 +35,7 @@ RUN pnpm build
 ##############################
 # Runner: minimal runtime image
 ##############################
-FROM node:26-slim AS runner
+FROM node:26-alpine AS runner
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
     HOSTNAME=0.0.0.0 \
