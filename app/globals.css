@@ -1,6 +1,8 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+
+/* Reuse the existing JS config (theme tokens, dark mode, plugins) under the
+   Tailwind v4 engine. See tailwind.config.ts. */
+@config "../tailwind.config.ts";
 
 @layer utilities {
   .text-balance {
